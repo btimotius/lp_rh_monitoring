@@ -1,0 +1,94 @@
+name: LP Monitor
+
+# Cron 5 menit = interval terkecil yang diizinkan GitHub.
+#
+# PENTING soal kuota: repo PRIVAT hanya dapat 2.000 menit/bulan dan tiap job
+# dibulatkan ke menit penuh, jadi jadwal ini akan menghabiskan ~8.640 menit -
+# jauh melewati kuota. Jadwal serapat ini hanya gratis di repo PUBLIK (runner
+# standar tidak dibatasi). Kalau kamu memilih repo privat, ubah ke
+# '*/30 * * * *' (≈1.440 menit/bulan) supaya tetap di dalam kuota.
+#
+# Catatan lain: cron GitHub bukan presisi. Saat beban platform tinggi, jadwal
+# bisa mundur beberapa menit, dan run kadang dilewati. Jangan pakai bot ini
+# sebagai satu-satunya pengaman posisi.
+# GitHub juga otomatis MENONAKTIFKAN workflow terjadwal di repo yang tidak ada
+# aktivitas selama 60 hari - commit state tiap run membuat repo tetap aktif,
+# jadi ini tidak jadi masalah selama bot berjalan.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:        # tombol "Run workflow" untuk memaksa cek segera
+
+# Cegah dua run bertumpuk menulis state bersamaan (state terakhir yang menang
+# akan menimpa yang lain). Run baru menunggu, bukan membatalkan yang berjalan.
+concurrency:
+  group: lp-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: write           # untuk push state terenkripsi ke branch bot-state
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10     # jaring pengaman: jangan sampai satu run macet berjam-jam
+
+    steps:
+      - name: Ambil kode
+        uses: actions/checkout@v4
+
+      - name: Siapkan Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependensi
+        run: pip install -r requirements.txt
+
+      # State disimpan di branch terpisah 'bot-state' sebagai SATU commit yang
+      # selalu ditimpa (force push). Kalau state di-commit ke branch utama tiap
+      # 5 menit, repo akan menumpuk ~8.600 commit sampah per bulan.
+      - name: Ambil state sebelumnya
+        run: |
+          mkdir -p state
+          if git fetch origin bot-state --depth=1 2>/dev/null; then
+            git show origin/bot-state:bot_state.enc > state/bot_state.enc 2>/dev/null \
+              && echo "state ditemukan ($(wc -c < state/bot_state.enc) byte)" \
+              || echo "branch bot-state ada tapi belum berisi state"
+          else
+            echo "belum ada state sebelumnya - run pertama"
+          fi
+
+      - name: Jalankan monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+          ALERT_WARN_PCT: ${{ vars.ALERT_WARN_PCT || '75' }}
+          ALERT_CRIT_PCT: ${{ vars.ALERT_CRIT_PCT || '90' }}
+          V4_INDEX_START_BLOCK: ${{ vars.V4_INDEX_START_BLOCK || '0' }}
+          STATE_FILE: state/bot_state.enc
+        run: python bot.py
+
+      # Selalu simpan state, termasuk kalau langkah sebelumnya gagal sebagian -
+      # progres index V4 dan offset Telegram yang sudah maju tetap berharga.
+      - name: Simpan state
+        if: always()
+        run: |
+          if [ ! -f state/bot_state.enc ]; then
+            echo "tidak ada state untuk disimpan"; exit 0
+          fi
+          git config user.name "lp-monitor-bot"
+          git config user.email "lp-monitor-bot@users.noreply.github.com"
+          tmp=$(mktemp -d)
+          cp state/bot_state.enc "$tmp/bot_state.enc"
+          git checkout --orphan bot-state-tmp
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          find . -maxdepth 1 -not -name '.git' -not -name '.' -exec rm -rf {} + 2>/dev/null || true
+          cp "$tmp/bot_state.enc" bot_state.enc
+          git add bot_state.enc
+          git commit -m "state $(date -u +%Y-%m-%dT%H:%M:%SZ)" --quiet
+          git push --force origin bot-state-tmp:bot-state
