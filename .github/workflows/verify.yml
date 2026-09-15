@@ -1,0 +1,47 @@
+name: Verify Setup
+
+# Jalankan manual dari tab Actions -> Verify Setup -> Run workflow.
+# Tujuannya membuktikan dua hal SEBELUM kamu mempercayai angka bot:
+#   1. semua address kontrak di config.py memang contract hidup di chain
+#      (bukan salah transkripsi dari dokumentasi)
+#   2. runner GitHub benar-benar bisa menjangkau RPC Robinhood Chain dan
+#      diizinkan memakai eth_getLogs - ini yang menentukan apakah index
+#      posisi V4 bisa jalan
+#
+# CATATAN PRIVASI: log Actions di repo PUBLIK bisa dibaca siapa saja, jadi
+# workflow ini sengaja TIDAK menerima alamat wallet dan tidak mencetak apa pun
+# yang berkaitan dengan posisimu. Pengecekan level wallet didapat gratis dari
+# /position pertama di Telegram, yang hanya kamu yang lihat.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Verifikasi kontrak & RPC
+        env:
+          ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+        run: python verify_setup.py
+
+      - name: Jalankan seluruh test (tanpa jaringan)
+        run: |
+          python test_uniswap_math.py
+          python test_pnl.py
+          python test_alerts.py
+          python simulate.py
