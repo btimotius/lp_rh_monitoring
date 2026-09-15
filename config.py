@@ -21,6 +21,23 @@ def _req(name: str) -> str:
     return v
 
 
+def _env_or(name: str, default: str) -> str:
+    """
+    Ambil env var, pakai default kalau KOSONG - bukan cuma kalau tidak ada.
+
+    Ini penting khusus di GitHub Actions: menulis
+        env:
+          FOO: ${{ secrets.FOO }}
+    tetap MEMBUAT variabel FOO walaupun secret-nya belum diisi - isinya string
+    kosong. os.environ.get(name, default) tidak akan memakai default dalam
+    kondisi itu karena kuncinya ada. Akibatnya nilai kosong lolos diam-diam dan
+    baru meledak jauh di belakang (bot mencoba konek ke URL kosong).
+    """
+    v = os.environ.get(name, "")
+    v = v.strip() if v else ""
+    return v or default
+
+
 # --- Rahasia (dari GitHub Secrets) ---
 def telegram_token() -> str:
     return _req("TELEGRAM_BOT_TOKEN")
@@ -36,7 +53,7 @@ def state_key() -> str:
 
 
 # --- Jaringan ---
-RPC_URL = os.environ.get("ROBINHOOD_RPC_URL", "https://rpc.mainnet.chain.robinhood.com")
+RPC_URL = _env_or("ROBINHOOD_RPC_URL", "https://rpc.mainnet.chain.robinhood.com")
 CHAIN_ID = 4663
 
 # --- Uniswap V3 di Robinhood Chain ---
@@ -52,15 +69,15 @@ V4_STATE_VIEW = "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b"
 USDG_ADDRESS = "0x5fc5360d0400a0fd4f2af552add042d716f1d168"
 
 # --- Ambang alert komposisi (persen NILAI posisi yang berupa meme token) ---
-WARN_PCT = float(os.environ.get("ALERT_WARN_PCT", "75"))
-CRIT_PCT = float(os.environ.get("ALERT_CRIT_PCT", "90"))
-RESET_MARGIN = float(os.environ.get("ALERT_RESET_MARGIN", "5"))
+WARN_PCT = float(_env_or("ALERT_WARN_PCT", "75"))
+CRIT_PCT = float(_env_or("ALERT_CRIT_PCT", "90"))
+RESET_MARGIN = float(_env_or("ALERT_RESET_MARGIN", "5"))
 
 # --- Batas kerja per run (GitHub Actions job sebaiknya selesai cepat) ---
-LOG_SCAN_CHUNK = int(os.environ.get("LOG_SCAN_CHUNK", "10000"))
-MAX_SCAN_SECONDS = float(os.environ.get("MAX_SCAN_SECONDS", "45"))
-V4_INDEX_START_BLOCK = int(os.environ.get("V4_INDEX_START_BLOCK", "0"))
+LOG_SCAN_CHUNK = int(_env_or("LOG_SCAN_CHUNK", "10000"))
+MAX_SCAN_SECONDS = float(_env_or("MAX_SCAN_SECONDS", "45"))
+V4_INDEX_START_BLOCK = int(_env_or("V4_INDEX_START_BLOCK", "0"))
 
-STATE_FILE = os.environ.get("STATE_FILE", "state/bot_state.enc")
+STATE_FILE = _env_or("STATE_FILE", "state/bot_state.enc")
 
 MAX_UINT128 = 2**128 - 1

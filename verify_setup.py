@@ -13,9 +13,70 @@ Tambahkan --wallet 0x... untuk sekalian mencoba membaca posisi wallet itu.
 import argparse
 import sys
 
+import requests
 from web3 import Web3
 
 import config
+
+
+def diagnose_rpc():
+    """
+    Tembak RPC dengan HTTP mentah SEBELUM web3 dipakai.
+
+    Kenapa perlu: web3.is_connected() cuma mengembalikan True/False, jadi kalau
+    gagal kita tidak tahu apa sebabnya - DNS mati, Cloudflare menolak IP runner,
+    endpoint minta API key, atau balasannya HTML bukan JSON. Fungsi ini mencetak
+    status code dan cuplikan body apa adanya supaya penyebabnya kelihatan
+    langsung di log, bukan ditebak.
+    """
+    print("=" * 60)
+    print("DIAGNOSA RPC (HTTP mentah)")
+    print("=" * 60)
+    url = config.RPC_URL
+    shown = url if "alchemy" not in url else url.rsplit("/", 1)[0] + "/<API_KEY disembunyikan>"
+    print(f"URL: {shown}")
+
+    try:
+        r = requests.post(
+            url,
+            json={"jsonrpc": "2.0", "id": 1, "method": "eth_chainId", "params": []},
+            timeout=20,
+            headers={"Content-Type": "application/json"},
+        )
+    except Exception as e:
+        print(f"GAGAL di level HTTP: {type(e).__name__}: {e}")
+        print("\nArtinya endpoint tidak bisa dihubungi sama sekali dari mesin ini "
+              "(DNS, firewall, atau host mati).")
+        return False
+
+    print(f"HTTP status: {r.status_code}")
+    ctype = r.headers.get("content-type", "-")
+    print(f"Content-Type: {ctype}")
+    body = r.text[:300].replace("\n", " ")
+    print(f"Body (300 karakter pertama): {body}")
+
+    if r.status_code == 200 and "json" in ctype:
+        try:
+            data = r.json()
+            if "result" in data:
+                print(f"OK - chainId dari RPC: {int(data['result'], 16)}")
+                return True
+            print(f"Balasan JSON tapi tanpa 'result': {data}")
+        except Exception as e:
+            print(f"Status 200 tapi body bukan JSON valid: {e}")
+    elif r.status_code in (401, 403):
+        print("\nDITOLAK. Dua sebab paling umum:")
+        print("  - endpoint butuh API key (dokumentasi resmi Robinhood memang "
+              "menganjurkan Alchemy dengan API key), atau")
+        print("  - Cloudflare memblokir IP datacenter seperti runner GitHub.")
+        print("Solusinya sama: pakai RPC ber-API-key, isi secret ROBINHOOD_RPC_URL.")
+    elif r.status_code == 429:
+        print("\nKENA RATE LIMIT. Pakai RPC ber-API-key lewat secret ROBINHOOD_RPC_URL.")
+    elif "html" in ctype.lower():
+        print("\nBalasannya HALAMAN HTML, bukan JSON-RPC - ini ciri khas halaman "
+              "tantangan/blokir Cloudflare. Pakai RPC ber-API-key lewat secret "
+              "ROBINHOOD_RPC_URL.")
+    return False
 
 
 def check_code(w3, label, address):
@@ -36,14 +97,22 @@ def main():
     ap.add_argument("--wallet", help="opsional: coba baca posisi wallet ini")
     args = ap.parse_args()
 
-    print(f"RPC: {config.RPC_URL}")
+    rpc_ok = diagnose_rpc()
+    print()
+    if not rpc_ok:
+        print("Berhenti di sini: tanpa RPC yang bisa dihubungi, pengecekan kontrak "
+              "tidak mungkin dilakukan. Perbaiki RPC dulu (lihat pesan di atas), "
+              "lalu jalankan ulang.")
+        return 1
+
     w3 = Web3(Web3.HTTPProvider(config.RPC_URL, request_kwargs={"timeout": 25}))
     try:
         if not w3.is_connected():
-            print("GAGAL: tidak bisa konek ke RPC.")
+            print("GAGAL: HTTP mentah berhasil tapi web3 tetap menolak koneksi - "
+                  "kemungkinan balasan RPC tidak sesuai standar JSON-RPC.")
             return 1
     except Exception as e:
-        print(f"GAGAL konek: {e}")
+        print(f"GAGAL konek lewat web3: {type(e).__name__}: {e}")
         return 1
 
     cid = w3.eth.chain_id
