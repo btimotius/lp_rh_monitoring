@@ -208,14 +208,46 @@ Selesai: seluruh kode, 33 test lulus (`test_uniswap_math.py` 9,
 `test_pnl.py` 15, `test_alerts.py` 9, plus `simulate.py` end-to-end dengan chain
 & Telegram palsu). Repo sudah dibuat publik dan di-push. `verify.yml` sudah ada.
 
+Selesai (update 2026-09-16): `verify_setup.py` via workflow `Verify Setup`
+sudah **hijau** (run pertama 2026-09-15 17:26 gagal konek RPC dari runner —
+kemungkinan gangguan sesaat di sisi RPC publik/Cloudflare, bukan pola
+konsisten; run ulang 2026-09-15 18:52 sukses). Jadi: runner GitHub terbukti
+bisa menjangkau RPC publik default dan semua address kontrak terverifikasi
+punya bytecode.
+
+**RPC publik default TERBUKTI kena rate limit (429) di beban nyata.**
+`verify_setup.py` lolos karena cuma sekali panggil `eth_getLogs` ringan, tapi
+index V4 sungguhan (`onchain.sync_v4_index`) butuh ribuan panggilan
+`eth_getLogs` berturutan (chunk 10.000 block, dari `V4_INDEX_START_BLOCK` ke
+block terkini) — 2026-09-15 19:xx, run nyata pertama dengan wallet terdaftar
+langsung dapat `HTTPError: 429` dan gagal baca semua posisi V4. **Pindah ke
+`ROBINHOOD_RPC_URL` ber-API-key sekarang wajib**, bukan opsional lagi — ini
+bukan skenario hipotetis di README, tapi sudah kejadian.
+
+**Perbandingan provider RPC (dicoba 2026-09-15/16, jangan diulang tanpa
+alasan baru):**
+
+| Provider | Hasil |
+|---|---|
+| Alchemy | Dashboard pemilik error terus ("Page could not be loaded") di semua browser/jaringan yang dicoba — bukan masalah akun, kemungkinan besar isu di sisi Alchemy/regional. Belum bisa dipakai sampai itu beres sendiri. |
+| QuickNode | Free tier sekarang cuma trial berwaktu, bukan free permanen. |
+| thirdweb | Sama, cuma trial. |
+| Chainstack | `eth_getLogs` **diblokir total** di free plan — dianggap fitur "Archive/Debug/Trace", butuh upgrade berbayar. Bukan soal limit range, memang dikunci. |
+| **dRPC** | **Yang dipakai sekarang.** `eth_getLogs` jalan tapi limit **100 block per panggilan** (pesan error mereka bilang "10000" — itu salah/menyesatkan, sudah dibuktikan lewat bisection manual). Throughput terukur: ~172 panggilan sukses / 45 detik (~378 block/detik), sesekali `408 Request timeout` (~1 dari 85 panggilan). |
+
+**Konsekuensi ke config:** `LOG_SCAN_CHUNK` dan `MAX_SCAN_SECONDS` di
+`config.py` awalnya TIDAK disambungkan ke `monitor.yml` (cuma bisa diubah
+lewat kode, bukan repo Variable). Sudah ditambahkan sebagai env di
+`monitor.yml` (baca dari `vars.LOG_SCAN_CHUNK` / `vars.MAX_SCAN_SECONDS`,
+default tetap 10000/45 kalau tidak diisi). Nilai yang dipakai sekarang:
+`LOG_SCAN_CHUNK=90` (di bawah limit 100 dRPC), `MAX_SCAN_SECONDS=240` (masih
+aman di bawah timeout job 10 menit). Dengan ini, estimasi index V4 mengejar
+dari `V4_INDEX_START_BLOCK` ke block terkini: beberapa hari, bukan
+berminggu-minggu seperti kalau dibiarkan di setting default.
+
 Belum selesai:
 
-1. **`verify_setup.py` belum pernah hijau.** Run terakhir gagal karena bug
-   env-var kosong di atas; sudah diperbaiki tapi belum dijalankan ulang. Ini
-   gerbang untuk semua langkah lain.
-2. **Belum terbukti runner GitHub bisa menjangkau RPC.** Kalau log menunjukkan
-   403/429/HTML → butuh API key Alchemy di secret `ROBINHOOD_RPC_URL`.
-3. Secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `STATE_KEY` — status
+1. Secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `STATE_KEY` — status
    pengisian belum dikonfirmasi.
 4. Workflow permissions belum dikonfirmasi diubah ke Read and write.
 5. `V4_INDEX_START_BLOCK` belum diisi — tanpa ini scan V4 mulai dari block 0 dan

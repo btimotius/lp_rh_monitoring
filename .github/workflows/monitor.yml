@@ -70,6 +70,8 @@ jobs:
           ALERT_WARN_PCT: ${{ vars.ALERT_WARN_PCT || '75' }}
           ALERT_CRIT_PCT: ${{ vars.ALERT_CRIT_PCT || '90' }}
           V4_INDEX_START_BLOCK: ${{ vars.V4_INDEX_START_BLOCK || '0' }}
+          LOG_SCAN_CHUNK: ${{ vars.LOG_SCAN_CHUNK || '10000' }}
+          MAX_SCAN_SECONDS: ${{ vars.MAX_SCAN_SECONDS || '45' }}
           STATE_FILE: state/bot_state.enc
         run: python bot.py
 
